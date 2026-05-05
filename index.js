@@ -31,7 +31,9 @@
 }
 
 class Component {
-  constructor() {}
+  constructor() {
+    this._children = new Map();
+  }
 
   getDomNode() {
     this._domNode = this.render();
@@ -45,77 +47,163 @@ class Component {
     }
     this._domNode = newNode;
   }
+
+  getChild(key, factory) {
+    let child = this._children.get(key);
+    if (!child) {
+      child = factory();
+      this._children.set(key, child);
+    }
+    return child;
+  }
+
+  removeChild(key) {
+    this._children.delete(key);
+  }
+}
+
+class AddTask extends Component {
+  constructor(onAddTask) {
+    super();
+    this.onAddTaskCallback = onAddTask;
+    this.state = { value: "" };
+  }
+
+  onAddInputChange = (e) => {
+    this.state.value = e.target.value;
+  };
+
+  onAddTask = () => {
+    if (this.state.value.trim() === "") return;
+    const value = this.state.value;
+    this.state.value = "";
+    this.onAddTaskCallback(value);
+  };
+
+  render() {
+    return createElement("div", { class: "add-todo" }, [
+      createElement(
+        "input",
+        {
+          id: "new-todo",
+          type: "text",
+          placeholder: "Задание",
+          value: this.state.value,
+        },
+        null,
+        { input: this.onAddInputChange },
+      ),
+      createElement("button", { id: "add-btn" }, "+", {
+        click: this.onAddTask,
+      }),
+    ]);
+  }
+}
+
+class Task extends Component {
+  constructor(task, onToggle, onDelete) {
+    super();
+    this.task = task;
+    this.onToggle = onToggle;
+    this.onDelete = onDelete;
+    this.state = { confirmDelete: false };
+  }
+
+  onToggleClick = () => {
+    this.onToggle();
+  };
+
+  onDeleteClick = () => {
+    if (!this.state.confirmDelete) {
+      this.state.confirmDelete = true;
+      this.update();
+    } else {
+      this.onDelete();
+    }
+  };
+
+  render() {
+    const checkboxAttrs = { type: "checkbox" };
+    if (this.task.done) checkboxAttrs.checked = "checked";
+    const labelAttrs = this.task.done ? { style: "color: gray;" } : {};
+    const buttonAttrs = this.state.confirmDelete
+      ? { style: "background-color: red;" }
+      : {};
+    return createElement("li", {}, [
+      createElement("input", checkboxAttrs, null, {
+        change: this.onToggleClick,
+      }),
+      createElement("label", labelAttrs, this.task.title),
+      createElement("button", buttonAttrs, "🗑️", {
+        click: this.onDeleteClick,
+      }),
+    ]);
+  }
 }
 
 class TodoList extends Component {
   constructor() {
     super();
-    this.state = {
-      tasks: [
-        { title: "Сделать домашку", done: false },
-        { title: "Сделать практику", done: false },
-        { title: "Пойти домой", done: false },
-      ],
-      newTask: "",
-    };
+    const saved = localStorage.getItem("todoListState");
+    if (saved) {
+      this.state = JSON.parse(saved);
+    } else {
+      this.state = {
+        tasks: [
+          { id: 1, title: "Сделать домашку", done: false },
+          { id: 2, title: "Сделать практику", done: false },
+          { id: 3, title: "Пойти домой", done: false },
+        ],
+        nextId: 4,
+      };
+    }
   }
 
-  onAddInputChange = (e) => {
-    this.state.newTask = e.target.value;
+  saveState = () => {
+    localStorage.setItem("todoListState", JSON.stringify(this.state));
   };
 
-  onAddTask = () => {
-    if (this.state.newTask.trim() === "") return;
-    this.state.tasks.push({ title: this.state.newTask, done: false });
-    this.state.newTask = "";
+  onAddTask = (title) => {
+    this.state.tasks.push({ id: this.state.nextId, title, done: false });
+    this.state.nextId++;
+    this.saveState();
     this.update();
   };
 
-  onToggleTask = (index) => {
-    this.state.tasks[index].done = !this.state.tasks[index].done;
+  onToggleTask = (id) => {
+    const task = this.state.tasks.find((t) => t.id === id);
+    if (task) task.done = !task.done;
+    this.saveState();
     this.update();
   };
 
-  onDeleteTask = (index) => {
-    this.state.tasks.splice(index, 1);
+  onDeleteTask = (id) => {
+    this.state.tasks = this.state.tasks.filter((t) => t.id !== id);
+    this.removeChild(`task-${id}`);
+    this.saveState();
     this.update();
   };
 
   render() {
+    const addTask = this.getChild("addTask", () => new AddTask(this.onAddTask));
     return createElement("div", { class: "todo-list" }, [
       createElement("h1", {}, "TODO List"),
-      createElement("div", { class: "add-todo" }, [
-        createElement(
-          "input",
-          {
-            id: "new-todo",
-            type: "text",
-            placeholder: "Задание",
-            value: this.state.newTask,
-          },
-          null,
-          { input: this.onAddInputChange },
-        ),
-        createElement("button", { id: "add-btn" }, "+", {
-          click: this.onAddTask,
-        }),
-      ]),
+      addTask.getDomNode(),
       createElement(
         "ul",
         { id: "todos" },
-        this.state.tasks.map((task, index) => {
-          const checkboxAttrs = { type: "checkbox" };
-          if (task.done) checkboxAttrs.checked = "checked";
-          const labelAttrs = task.done ? { style: "color: gray;" } : {};
-          return createElement("li", {}, [
-            createElement("input", checkboxAttrs, null, {
-              change: () => this.onToggleTask(index),
-            }),
-            createElement("label", labelAttrs, task.title),
-            createElement("button", {}, "🗑️", {
-              click: () => this.onDeleteTask(index),
-            }),
-          ]);
+        this.state.tasks.map((task) => {
+          const taskComp = this.getChild(
+            `task-${task.id}`,
+            () =>
+              new Task(
+                task,
+                () => this.onToggleTask(task.id),
+                () => this.onDeleteTask(task.id),
+              ),
+          );
+          taskComp.task = task;
+          return taskComp.getDomNode();
         }),
       ),
     ]);
